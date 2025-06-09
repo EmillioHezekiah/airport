@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Flight CO₂ + Offset Calculator</title>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js" defer></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: auto;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    h2 {
+      text-align: center;
+      margin-bottom: 25px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px 30px;
+      align-items: start;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: bold;
+      font-size: 1rem;
+    }
+    input, select, button {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 1rem;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      transition: border-color 0.2s;
+    }
+    input:focus, select:focus {
+      border-color: #007bff;
+      outline: none;
+    }
+    button {
+      background: #007bff;
+      color: #fff;
+      cursor: pointer;
+      border: none;
+      border-radius: 4px;
+      font-weight: 600;
+      margin-top: 30px;
+      padding: 12px;
+      transition: background-color 0.3s ease;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .result {
+      margin-top: 25px;
+      padding: 15px 20px;
+      background: #e9f7ef;
+      border: 1px solid #a1d6ae;
+      border-radius: 4px;
+      font-size: 1.1rem;
+      line-height: 1.4;
+      white-space: pre-line;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 700px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      button {
+        margin-top: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h2>🛫 Flight CO₂ + Offset Calculator</h2>
+  <div class="grid">
+    <div>
+      <label for="originSearch">Origin (search)</label>
+      <input id="originSearch" list="originList" placeholder="Type airport code or name" autocomplete="off" />
+      <datalist id="originList"></datalist>
+    </div>
+    <div>
+      <label for="destinationSearch">Destination (search)</label>
+      <input id="destinationSearch" list="destinationList" placeholder="Type airport code or name" autocomplete="off" />
+      <datalist id="destinationList"></datalist>
+    </div>
+    <div>
+      <label for="class">Class</label>
+      <select id="class">
+        <option>economy</option>
+        <option>business</option>
+        <option>first</option>
+      </select>
+    </div>
+    <div>
+      <label for="offsetCost">Offset cost ($/tonne)</label>
+      <input id="offsetCost" type="number" value="20" min="0" step="any" />
+    </div>
+  </div>
+  <button onclick="calculate()">Calculate CO₂ + Offset</button>
+  <div id="output" class="result" style="display:none;"></div>
+
+  <script>
+    let airportData = {};
+
+    function toRad(x) { return x * Math.PI / 180; }
+    function haversine(a, b) {
+      const R = 6371;
+      const dLat = toRad(b.lat - a.lat);
+      const dLon = toRad(b.lon - a.lon);
+      const t = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLon/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(t), Math.sqrt(1 - t));
+    }
+
+    function loadAirports() {
+      const url = 'https://raw.githubusercontent.com/jpatokal/openflights/master/data/airports.dat';
+
+      Papa.parse(url, {
+        download: true,
+        complete: function(results) {
+          const originList = document.getElementById('originList');
+          const destList = document.getElementById('destinationList');
+
+          const airports = [];
+
+          results.data.forEach(row => {
+            const iata = row[4];
+            const name = row[1];
+            const city = row[2];
+            const lat = parseFloat(row[6]);
+            const lon = parseFloat(row[7]);
+
+            if (iata && iata.length === 3 && !isNaN(lat) && !isNaN(lon)) {
+              const label = `${iata} – ${name}, ${city}`;
+              airportData[iata] = { lat, lon, name: label };
+              airports.push(label);
+            }
+          });
+
+          airports.sort((a, b) => a.localeCompare(b));
+
+          airports.forEach(label => {
+            const originOption = document.createElement('option');
+            originOption.value = label;
+            originList.appendChild(originOption);
+
+            const destOption = document.createElement('option');
+            destOption.value = label;
+            destList.appendChild(destOption);
+          });
+
+          console.log(`✅ Loaded and sorted ${airports.length} airports`);
+        }
+      });
+    }
+
+    function findIATAfromSearch(value) {
+      const match = Object.entries(airportData).find(([iata, data]) => data.name === value);
+      return match ? match[0] : '';
+    }
+
+    function calculate() {
+      const searchOrigin = document.getElementById('originSearch').value;
+      const searchDest = document.getElementById('destinationSearch').value;
+      const cls = document.getElementById('class').value;
+      const costPerTon = parseFloat(document.getElementById('offsetCost').value);
+
+      const o = findIATAfromSearch(searchOrigin);
+      const d = findIATAfromSearch(searchDest);
+
+      if (!o || !d) return alert('Please select both origin and destination.');
+      if (o === d) return alert('Origin and destination must differ.');
+
+      const oa = airportData[o], da = airportData[d];
+      if (!oa || !da) return alert('Selected airport data missing.');
+
+      const distance = haversine(oa, da);
+      const factor = { economy: 0.115, business: 0.178, first: 0.240 }[cls];
+      const co2kg = distance * factor;
+      const co2t = co2kg / 1000;
+      const offset = (co2t * costPerTon).toFixed(2);
+
+      const output = document.getElementById('output');
+      output.style.display = 'block';
+      output.innerHTML = `
+        <strong>Distance:</strong> ${distance.toFixed(1)} km<br>
+        <strong>CO₂:</strong> ${co2kg.toFixed(1)} kg (${co2t.toFixed(3)} t)<br>
+        <strong>Offset cost:</strong> $${offset} @ $${costPerTon}/t
+      `;
+    }
+
+    window.onload = () => {
+      if (typeof Papa === 'undefined') {
+        alert("PapaParse failed to load.");
+      } else {
+        loadAirports();
+      }
+    };
+  </script>
+</body>
+</html>
